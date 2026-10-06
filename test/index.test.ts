@@ -1,6 +1,12 @@
+import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { expect, test } from "vitest";
-import { DEFAULT_OPTIONS, createHooks, fit, resolveOptions } from "../src/index.ts";
+import { DEFAULT_OPTIONS, NAME, createHooks, currentOptions, fit, resolveOptions } from "../src/index.ts";
 import { effortState } from "../src/request.ts";
+
+const root = mkdtempSync(path.join(tmpdir(), "auto-effort-"));
+process.env.XDG_CONFIG_HOME = path.join(root, "config");
 
 const jevBody = (score: number, ack = 0.02, confidence = 0.9) =>
   JSON.stringify({ model: "jev-test", answers: { depth: { type: "score", score, confidence }, ack: { type: "noul", noul: ack } } });
@@ -74,6 +80,24 @@ test("options merge over the defaults", () => {
   expect(o.agents).toEqual(["build", "general"]);
   expect(o.policy.floor).toBe("medium");
   expect(o.policy.alpha).toBe(0.5);
+});
+
+test("the shared settings files are read on each prompt, so edits apply without a restart", async () => {
+  const project = path.join(root, "project");
+  const file = path.join(root, "config", "agents", `${NAME}.json`);
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, JSON.stringify({ enabled: false }));
+  utimesSync(file, 1_000, 1_000);
+  const s = setup([0, 0]);
+  const hooks = await createHooks(s.client, () => currentOptions({ toast: false }, project), s.fetchImpl);
+  expect(await prompt(hooks, "what does ls -a do?", "high")).toBe("high");
+  expect(s.sent).toEqual([]);
+
+  writeFileSync(file, JSON.stringify({ enabled: true }));
+  utimesSync(file, 2_000, 2_000);
+  expect(await prompt(hooks, "what does ls -a do?", "high")).toBe("low");
+  expect(s.sent).toHaveLength(1);
+  expect(s.toasts).toEqual([]);
 });
 
 test("state: previous prompts and what the last run did", () => {

@@ -40,17 +40,37 @@ In `opencode.jsonc`, pinned to a commit:
 
 ```jsonc
 "plugin": [
-  ["opencode-auto-effort@github:justmytwospence/opencode-auto-effort#<commit>", {
-    // all optional; defaults shown
-    "agents": ["build"],
-    "toast": true,
-    "jev": { "model": "jev-latest", "timeoutMs": 1500 },
-    "policy": { "floor": "low", "alpha": 0.5, "margin": 0.6, "jump": 1.5, "jumpConfidence": 0.6, "minDwell": 2, "ackThreshold": 0.7 }
-  }]
+  "opencode-auto-effort@github:justmytwospence/opencode-auto-effort#<commit>"
 ]
 ```
 
 Needs `TYPESAFE_API_KEY` in opencode's environment. Tested with opencode 1.18.29.
+
+## Settings
+
+Settings live in a shared, harness-neutral place that the pi and Claude Code ports of this plugin
+read as well, so one file configures auto-effort everywhere: `~/.config/agents/auto-effort.json`
+(under `$XDG_CONFIG_HOME` when set) for you, and `<project>/.agents/auto-effort.json` for a
+project. Keys a harness does not know are ignored, so pi-only keys in the same file are fine. All
+keys are optional; the defaults:
+
+```jsonc
+{
+  "enabled": true,
+  "agents": ["build"],
+  "toast": true,
+  "jev": { "model": "jev-latest", "timeoutMs": 1500 },
+  "policy": { "floor": "low", "alpha": 0.5, "margin": 0.6, "jump": 1.5, "jumpConfidence": 0.6, "minDwell": 2, "ackThreshold": 0.7 }
+}
+```
+
+opencode-only overrides go in the plugin's options in `opencode.jsonc` (the second element of the
+plugin tuple, `["opencode-auto-effort@...", { "toast": false }]`) or in
+`<project>/.opencode/auto-effort.json`. The layers merge in this order, later winning, objects
+deep-merged and arrays and scalars replaced: built-in defaults, `~/.config/agents/auto-effort.json`,
+the `opencode.jsonc` options, `<project>/.agents/auto-effort.json`,
+`<project>/.opencode/auto-effort.json`. The files are re-read when they change, so edits apply to
+the next prompt without a restart; a missing or invalid file is ignored.
 
 ## Development
 

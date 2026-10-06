@@ -2,11 +2,17 @@
 // how demanding the request is (0-3) in chat.message, before the user message is saved; the
 // policy smooths that into a level, and the message carries it, so every model request of that
 // turn (tool follow-ups included) uses it and prompt caches survive. The variant the session
-// would have used (your pick, or the agent's) is the ceiling.
+// would have used (your pick, or the agent's) is the ceiling. Settings come from the shared
+// `~/.config/agents/auto-effort.json` and `.agents/auto-effort.json`, the plugin options, and
+// `.opencode/auto-effort.json`, read on each prompt (see settings.ts).
 import type { Hooks, Plugin, PluginInput } from "@opencode-ai/plugin";
 import { askJev, noul, score } from "./jev.ts";
 import { DEFAULT_POLICY, type EffortState, LEVELS, type Policy, decide, levelIndex } from "./policy.ts";
 import { type MessageLike, QUESTIONS, effortState } from "./request.ts";
+import { deepMerge, loadSettings } from "./settings.ts";
+
+/** The plugin's name: its settings files are `<dir>/auto-effort.json`. */
+export const NAME = "auto-effort";
 
 export interface Options {
   enabled: boolean;
@@ -33,14 +39,17 @@ interface SessionState extends EffortState {
 
 type Client = PluginInput["client"];
 
+/** The plugin options from opencode.jsonc over the defaults: that layer alone, without the shared files. */
 export function resolveOptions(raw: Record<string, unknown> | undefined): Options {
-  const o = (raw ?? {}) as Partial<Options>;
-  return {
-    ...DEFAULT_OPTIONS,
-    ...o,
-    jev: { ...DEFAULT_OPTIONS.jev, ...(o.jev ?? {}) },
-    policy: { ...DEFAULT_OPTIONS.policy, ...(o.policy ?? {}) },
-  };
+  return deepMerge(DEFAULT_OPTIONS, raw);
+}
+
+/**
+ * The options in force now: defaults, `~/.config/agents/auto-effort.json`, the plugin options,
+ * `<directory>/.agents/auto-effort.json`, then `<directory>/.opencode/auto-effort.json`.
+ */
+export function currentOptions(raw: Record<string, unknown> | undefined, directory: string): Options {
+  return loadSettings(NAME, DEFAULT_OPTIONS, raw, directory);
 }
 
 /** The highest of `available` at or below `level`; the ceiling when none is. */
@@ -53,7 +62,12 @@ export function fit(level: string, ceiling: string, available: readonly string[]
   return ceiling;
 }
 
-export async function createHooks(client: Client, options: Options, fetchImpl?: typeof fetch): Promise<Hooks> {
+/**
+ * `options` is read on every prompt when it is a function (the server passes one that merges the
+ * settings files), so edits apply without a restart.
+ */
+export async function createHooks(client: Client, options: Options | (() => Options), fetchImpl?: typeof fetch): Promise<Hooks> {
+  const optionsNow = typeof options === "function" ? options : () => options;
   const sessions = new Map<string, SessionState>();
   const variants = new Map<string, string[] | undefined>();
 
@@ -78,6 +92,7 @@ export async function createHooks(client: Client, options: Options, fetchImpl?: 
 
   return {
     "chat.message": async (input, output) => {
+      const options = optionsNow();
       if (!options.enabled || !options.agents.includes(output.message.agent)) return;
       const model = output.message.model as { providerID: string; modelID: string; variant?: string };
       const ceiling = model.variant;
@@ -127,6 +142,6 @@ export async function createHooks(client: Client, options: Options, fetchImpl?: 
   };
 }
 
-const server: Plugin = async (input, options) => createHooks(input.client, resolveOptions(options));
+const server: Plugin = async (input, options) => createHooks(input.client, () => currentOptions(options, input.directory));
 
-export default { id: "auto-effort", server };
+export default { id: NAME, server };
